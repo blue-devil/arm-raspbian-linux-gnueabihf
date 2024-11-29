@@ -1,1 +1,150 @@
 # Maintainer: Blue DeviL // SCT <bluedevil.SCT@gmail.com>
+
+_target="arm-linux-gnueabihf"
+__target=${_target}-raspbian
+pkgname=${__target}-gcc-stage1
+_pkgver='4.9'
+pkgver="${_pkgver}.2"
+_islver='0.12.2'
+_cloogver='0.18.1'
+pkgrel='1'
+pkgdesc="The GNU Compiler Collection (${_pkgver}.x). Stage 1 for toolchain building"
+arch=('x86_64' 'aarch64')
+license=('GPL-3.0-or-later' 'LGPL-3.0+' 'GFDL-1.3' 'LicenseRef-custom')
+url='https://gcc.gnu.org'
+depends=('zlib')
+makedepends=('binutils>=2.25' 'libmpc' 'doxygen')
+#checkdepends=('dejagnu' 'inetutils')
+options=('!emptydirs' '!strip' '!buildflags')
+source=(
+  "https://sourceware.org/pub/gcc/releases/gcc-${pkgver}/gcc-${pkgver}.tar.bz2"
+  "https://sourceware.org/pub/gcc/infrastructure/isl-${_islver}.tar.bz2"
+  "https://sourceware.org/pub/gcc/infrastructure/cloog-${_cloogver}.tar.gz"
+  '0000-gcc-4.9.ucontext.patch'
+  '0001-gcc-4.9-SIGSEGV.patch'
+  '0002-gcc-4.9-__res_state.patch'
+  '0003-gcc-4.9-ustate.patch'
+  '0004-glibc-2.31-libsanitizer.patch'
+)
+sha256sums=('2020c98295856aa13fda0f2f3a4794490757fc24bcca918d52cc8b4917b972dd'
+            'f4b3dbee9712850006e44f0db2103441ab3d13b406f77996d1df19ee89d11fb4'
+            '02500a4edd14875f94fe84cbeda4290425cb0c1c2474c6f75d75a303d64b4196'
+            '44ea987c9ee1ab3234f20eca51f8d6c68910b579e63ec58ff7a0dde38093f6ba'
+            'eb59578cbf32da94d7a11fabf83950c580f0f6fb58f893426d6a258b7e44351e'
+            '9ce8a94aad61a26839687734b48f0628e610663cd0d5ad9edfc6e571cf294bac'
+            '11f2adf34c32ec2d121a14cd10751d79c77aebe7e4592d4cfaa7190953bdf782'
+            '526568532a879f2755fb7e834c1c55caae53252713562e21a51c861463cb5931')
+
+prepare() {
+  cd gcc-${pkgver}
+
+  # link isl/cloog for in-tree builds
+  ln -s "../isl-${_islver}" 'isl'
+  ln -s "../cloog-${_cloogver}" 'cloog'
+
+  # Do not run fixincludes
+  sed -e 's@\./fixinc\.sh@-c true@' -i 'gcc/Makefile.in'
+
+  # fix build with glibc 2.26
+  #diff -pNau5 libsanitizer/sanitizer_common/sanitizer_linux.h{.orig,} > '../0000-gcc-4.9.ucontext.patch'
+  patch -Nbup0 -i "${srcdir}/0000-gcc-4.9.ucontext.patch" # https://gcc.gnu.org/bugzilla/attachment.cgi?id=41921
+  #diff -pNau5 libsanitizer/asan/asan_linux.cc{.orig,} > '../0001-gcc-4.9-SIGSEGV.patch'
+  patch -Nbup0 -i "${srcdir}/0001-gcc-4.9-SIGSEGV.patch"
+  #diff -pNau5 libsanitizer/tsan/tsan_platform_linux.cc{.orig,} > '../0002-gcc-4.9-__res_state.patch'
+  patch -Nbup0 -i "${srcdir}/0002-gcc-4.9-__res_state.patch" # https://gcc.gnu.org/bugzilla/attachment.cgi?id=41922
+  sed -e 's:\bstruct ucontext\b:ucontext_t:g' -i $(grep --include '*.[ch]' --include '*.cc' -lre '\bstruct ucontext\b')
+  sed -e 's:\bstruct sigaltstack\b:stack_t:g' -i $(grep --include '*.[ch]' --include '*.cc' -lre '\bstruct sigaltstack\b')
+  sed -e '/^struct ucontext_t/,/^};/ d' -i 'libsanitizer/tsan/tsan_interceptors.cc'
+  if grep -e '^struct ucontext_t' 'libsanitizer/tsan/tsan_interceptors.cc'; then
+    set +u
+    echo 'Failed to remove ^struct ucontext_t'
+    false
+  fi
+
+  # Arch Linux installs x86_64 libraries /lib
+  case "${CARCH}" in
+  'x86_64') sed -e '/m64=/ s/lib64/lib/' -i 'gcc/config/i386/t-linux64' ;;
+  esac
+
+  patch -Nbup0 -i "${srcdir}/0003-gcc-4.9-ustate.patch"
+  patch -p1 -i "${srcdir}/0004-glibc-2.31-libsanitizer.patch"
+
+  if ! grep -qFxe "${pkgver%%_*}" 'gcc/BASE-VER'; then
+    echo "Version has changed from ${pkgver%%_*} to"
+    cat 'gcc/BASE-VER'
+    set +u
+    false
+  fi
+
+  # hack! - some configure tests for header files using "$CPP $CPPFLAGS"
+  #sed -e '/ac_cpp=/s/$CPPFLAGS/$CPPFLAGS -O2/' -i {libiberty,gcc}/configure
+
+  rm -rf 'gcc-build'
+  mkdir 'gcc-build'
+}
+
+build() {
+  export MAKEFLAGS="${_MAKEFLAGS}"
+  export CHOST="${_CHOST}"
+  export CFLAGS="${CFLAGS} -std=c99 -Wno-error=format-security -Wno-cast-function-type -Wno-expansion-to-defined -Wno-switch -Wno-implicit-fallthrough -Wno-shift-negative-value -Wno-use-after-free -Wno-misleading-indentation -Wno-ignored-qualifiers -Wno-switch-bool -Wno-format-diag -Wno-int-in-bool-context -Wno-memset-elt-size -Wno-format-overflow -Wno-uninitialized -Wno-logical-not-parentheses -Wno-dangling-else"
+  export CXXFLAGS="${CXXFLAGS} -std=c++11 -Wno-error=format-security -Wno-cast-function-type -Wno-expansion-to-defined -Wno-switch -Wno-implicit-fallthrough -Wno-shift-negative-value -Wno-use-after-free -Wno-misleading-indentation -Wno-register -Wno-literal-suffix -Wno-ignored-qualifiers -Wno-switch-bool -Wno-format-diag -Wno-int-in-bool-context -Wno-class-memaccess -Wno-memset-elt-size -Wno-format-overflow -Wno-uninitialized -Wno-logical-not-parentheses -Wno-dangling-else"
+
+  set -u
+  cd "gcc-${pkgver}/gcc-build"
+
+  if [ ! -s 'Makefile' ]; then
+    # The following options are one per line, mostly sorted so they are easy to diff compare to other gcc packages.
+    local _conf=(
+      --target=${_target}
+      --build="${CHOST}"
+      --program-prefix=${__target}-
+      --disable-libssp
+      --disable-libstdcxx-pch
+      --disable-libunwind-exceptions
+      --disable-multilib
+      --disable-werror
+      --enable-__cxa_atexit
+      --enable-checking='release'
+      --enable-clocale='gnu'
+      --enable-cloog-backend='isl'
+      --enable-gnu-unique-object
+      --enable-install-libiberty
+      --enable-languages='c,c++,fortran,go,lto,objc,obj-c++'
+      --enable-linker-build-id
+      --enable-lto
+      --enable-plugin
+      --enable-shared
+      --enable-threads='posix'
+      --enable-version-specific-runtime-libs
+      --infodir="/usr/${__target}/share/info"
+      --libdir="/usr/${__target}/lib"
+      --libexecdir="/usr/${__target}/lib"
+      --mandir="/usr/${__target}/share/man"
+      #--program-suffix="-${_pkgver}"
+      --with-bugurl='https://bugs.archlinux.org/'
+      --with-linker-hash-style='gnu'
+      --with-as=/usr/bin/${__target}-as \
+      --with-ld=/usr/bin/${__target}-ld \
+      --with-system-zlib
+      --prefix='/usr'
+    )
+    ../configure "${_conf[@]}"
+
+    sed -e 's/^STAGE1_CXXFLAGS.*$/& -std=gnu++11/' -i 'Makefile'
+  fi
+
+  # The GCC 4.9 library is otherwise found incorrectly when invoking host tools
+  LD_PRELOAD='/usr/lib/libstdc++.so' \
+  nice make -s
+
+  set +u; msg 'Compile complete'; set -u
+
+  # make documentation
+  #make -s -j1 -C "${CHOST}/libstdc++-v3/doc" 'doc-man-doxygen'
+}
+
+package() {
+  make -j1 DESTDIR="${pkgdir}" install
+}
+
+# vim: ts=2 sw=2 et:

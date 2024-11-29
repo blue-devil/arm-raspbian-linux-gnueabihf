@@ -2,17 +2,12 @@
 *-aarch64.pkg.tar.xz
 *-x86_64.pkg.tar.xz
 
-# binutils
-binutils-2.25.tar.bz2
-binutils-2.25.tar.bz2.sig
-
-# linux-api-headers
-linux-4.4.34.tar.sign
-linux-4.4.34.tar.xz
-
-# openssl
-openssl-1.1.1w.tar.gz
-openssl-1.1.1w.tar.gz.asc
+*tar.bz2
+*tar.bz2.sig
+*tar.xz
+*tar.sign
+*tar.gz
+*tar.gz.asc
 
 
 #
