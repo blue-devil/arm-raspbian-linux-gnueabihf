@@ -1,5 +1,7 @@
 # Raspbian ARMHF Toolchain for Arch Linux ARM (Aarch64 Host)
 
+**TODO** Compile stage1
+
 There is a populer Raspbian Image which can be emulate by QEMU. That Raspbian
 image is which @azeria used in her blog. Here are the versions list of
 important packages in that raspbian image
