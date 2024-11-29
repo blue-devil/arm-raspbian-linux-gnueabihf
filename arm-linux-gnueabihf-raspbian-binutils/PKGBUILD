@@ -1,0 +1,74 @@
+# Maintainer: Blue DeviL // SCT <bluedevil.SCT@gmail.com>
+
+_target="arm-linux-gnueabihf"
+__target=${_target}-raspbian
+pkgname=${__target}-binutils
+pkgver=2.25
+pkgrel=1
+pkgdesc='A set of programs to assemble and manipulate binary and object files for the Raspbian ARM target'
+arch=('x86_64' 'aarch64')
+url='https://www.gnu.org/software/binutils/'
+license=(GPL)
+depends=(zlib libelf)
+source=(https://ftp.gnu.org/gnu/binutils/binutils-$pkgver.tar.bz2{,.sig}
+        binutils-e9c1bdad.patch
+        string_patch_on_errorsh.patch)
+sha256sums=('22defc65cfa3ef2a3395faaea75d6331c6e62ea5dfacfed3e2ec17b08c882923'
+            'SKIP'
+            '4dc13852d61825aa59b7436ae41c449d181e5a66b355b6ca69604e4da3e03699'
+            '140d31191d2ae79056ca0a12d6cffa5fd9e49fda96335744c67242b8cfbf4b9e')
+
+
+prepare() {
+  cd binutils-$pkgver
+  # https://sourceware.org/bugzilla/show_bug.cgi?id=16992
+  patch -p1 -i ${srcdir}/binutils-e9c1bdad.patch
+  patch -p1 -i ${srcdir}/string_patch_on_errorsh.patch
+
+  # hack! - libiberty configure tests for header files using "$CPP $CPPFLAGS"
+  sed -i "/ac_cpp=/s/\$CPPFLAGS/\$CPPFLAGS -O2/" libiberty/configure
+
+  #mkdir ${srcdir}/binutils-build
+}
+
+build() {
+  cd binutils-$pkgver
+
+  ./configure --prefix=/usr \
+              --program-prefix=${__target}- \
+              --with-lib-path=/usr/lib/binutils/${__target} \
+              --with-local-prefix=/usr/lib/${__target} \
+              --with-sysroot=/usr/${__target} \
+              --target=${_target} \
+              --disable-nls \
+              --enable-threads --enable-shared --with-pic \
+              --enable-ld=default --enable-gold --enable-plugins \
+              --enable-deterministic-archives \
+              --disable-werror --disable-gdb --disable-sim
+              # --host=${CHOST} --build=${CHOST}
+
+  make
+}
+
+check() {
+  cd binutils-$pkgver
+
+  # unset LDFLAGS as testsuite makes assumptions about which ones are active
+  # do not abort on errors - manually check log files
+  make -k LDFLAGS="" check || true
+}
+
+package() {
+  cd binutils-$pkgver
+
+  make DESTDIR="$pkgdir" install
+
+  mv "$pkgdir"/usr/${_target} "$pkgdir"/usr/${__target}
+  mv "$pkgdir"/usr/aarch64-unknown-linux-gnu/${_target}/lib/* "$pkgdir"/usr/${__target}/lib
+  mkdir "$pkgdir"/usr/${__target}/share
+  mv "$pkgdir"/usr/share/info "$pkgdir"/usr/${__target}/share
+  
+  rm -r "$pkgdir"/usr/aarch64-unknown-linux-gnu/
+}
+
+# vim: ts=2 sw=2 et:

@@ -1,0 +1,11 @@
+--- a/gold/errors.h.orig	2024-11-29 12:29:37.048003192 +0100
++++ b/gold/errors.h	2024-11-29 12:29:57.760003202 +0100
+@@ -26,7 +26,7 @@
+ #include <cstdarg>
+ 
+ #include "gold-threads.h"
+-
++#include <string>
+ namespace gold
+ {
+ 

@@ -1,0 +1,32 @@
+# Maintainer: Blue DeviL // SCT <bluedevil.SCT@gmail.com>
+# Maintainer: Blue DeviL // SCT <bluedevil.SCT@gmail.com>
+
+_target_arch=arm
+_target=arm-linux-gnueabihf-raspbian
+pkgname=$_target-linux-api-headers
+pkgver=4.4.34
+pkgrel=1
+pkgdesc="Kernel headers sanitized for use in userspace ($_target)"
+arch=('x86_64' 'aarch64')
+url='https://www.kernel.org'
+license=(GPL2)
+makedepends=(rsync)
+source=(https://www.kernel.org/pub/linux/kernel/v4.x/linux-$pkgver.tar.{xz,sign})
+sha256sums=('2b69ac9aca91f571a0f052593f351279f8eb5901da50d3e2e5245ff59a3a33f7'
+            'SKIP')
+validpgpkeys=(
+  'ABAF11C65A2970B130ABE3C479BE3E4300411886'  # Linus Torvalds
+  '647F28654894E3BD457199BE38DBBDC86092693E'  # Greg Kroah-Hartman
+)
+
+
+package() {
+  cd linux-$pkgver
+
+  make INSTALL_HDR_PATH="$pkgdir/usr/$_target/" ARCH=$_target_arch V=0 headers_install
+
+  # clean-up unnecessary files generated during install
+  find "$pkgdir" \( -name .install -or -name ..install.cmd \) -delete
+}
+
+# vim: ts=2 sw=2 et:
