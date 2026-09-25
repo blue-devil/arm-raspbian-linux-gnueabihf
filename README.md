@@ -94,9 +94,9 @@ Blue DeviL // SCT
 
 > An empty shell shines  
 > The clock arm points to wasted time  
-> Forever rots
+> Forever rots  
 >
-> Blue DeviL // SCT
+> Blue DeviL // SCT  
 > 25/09/2026
 
 ## License
