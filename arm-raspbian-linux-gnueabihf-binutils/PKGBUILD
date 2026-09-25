@@ -1,74 +1,86 @@
-# Maintainer: Blue DeviL // SCT <bluedevil.SCT@gmail.com>
+# Maintainer: Wilken Gottwalt <wilken dot gottwalt at posteo dot net>
+# Contributor: Blue DeviL // SCT <bluedevil [dot] SCT [at] proton [dot] me>
 
-_target="arm-linux-gnueabihf"
-__target=${_target}-raspbian
-pkgname=${__target}-binutils
+_target=arm-raspbian-linux-gnueabihf
+pkgname=${_target}-binutils
 pkgver=2.25
 pkgrel=1
-pkgdesc='A set of programs to assemble and manipulate binary and object files for the Raspbian ARM target'
-arch=('x86_64' 'aarch64')
+pkgdesc="A set of programs to assemble and manipulate binary and object files for the Raspbian Jessie ARMv6 target (${_target})"
+arch=(aarch64 x86_64)
 url='https://www.gnu.org/software/binutils/'
-license=(GPL)
+license=(GPL-3.0-or-later)
 depends=(zlib libelf)
-source=(https://ftp.gnu.org/gnu/binutils/binutils-$pkgver.tar.bz2{,.sig}
+options=(!emptydirs staticlibs)
+source=(https://ftp.gnu.org/gnu/binutils/binutils-${pkgver}.tar.bz2{,.sig}
         binutils-e9c1bdad.patch
         string_patch_on_errorsh.patch)
 sha256sums=('22defc65cfa3ef2a3395faaea75d6331c6e62ea5dfacfed3e2ec17b08c882923'
             'SKIP'
             '4dc13852d61825aa59b7436ae41c449d181e5a66b355b6ca69604e4da3e03699'
             '140d31191d2ae79056ca0a12d6cffa5fd9e49fda96335744c67242b8cfbf4b9e')
-
+validpgpkeys=('EAF1C276A747E9ED86210CBAC3126D3B4AE55E93') # Tristan Gingold <gingold@adacore.com>
 
 prepare() {
-  cd binutils-$pkgver
+  cd binutils-${pkgver}
+
+  # gold: -Bsymbolic must not be reset by --dynamic-list (upstream e9c1bdad)
   # https://sourceware.org/bugzilla/show_bug.cgi?id=16992
-  patch -p1 -i ${srcdir}/binutils-e9c1bdad.patch
-  patch -p1 -i ${srcdir}/string_patch_on_errorsh.patch
+  patch -p1 -i "${srcdir}"/binutils-e9c1bdad.patch
+  # gold: errors.h uses std::string without including <string> (fails with modern libstdc++)
+  patch -p1 -i "${srcdir}"/string_patch_on_errorsh.patch
 
   # hack! - libiberty configure tests for header files using "$CPP $CPPFLAGS"
   sed -i "/ac_cpp=/s/\$CPPFLAGS/\$CPPFLAGS -O2/" libiberty/configure
 
-  #mkdir ${srcdir}/binutils-build
+  mkdir -p "${srcdir}"/binutils-build
 }
 
 build() {
-  cd binutils-$pkgver
+  cd binutils-build
 
-  ./configure --prefix=/usr \
-              --program-prefix=${__target}- \
-              --with-lib-path=/usr/lib/binutils/${__target} \
-              --with-local-prefix=/usr/lib/${__target} \
-              --with-sysroot=/usr/${__target} \
-              --target=${_target} \
-              --disable-nls \
-              --enable-threads --enable-shared --with-pic \
-              --enable-ld=default --enable-gold --enable-plugins \
-              --enable-deterministic-archives \
-              --disable-werror --disable-gdb --disable-sim
-              # --host=${CHOST} --build=${CHOST}
+  # 2014-era sources: no -Werror=format-security, and keep gold on the C++ standard it was written for
+  CFLAGS="${CFLAGS/-Werror=format-security/}"
+  CXXFLAGS="${CXXFLAGS/-Werror=format-security/} -std=gnu++11"
+
+  ../binutils-${pkgver}/configure \
+    --build=${CHOST} \
+    --host=${CHOST} \
+    --target=${_target} \
+    --prefix=/usr \
+    --with-sysroot=/usr/${_target} \
+    --with-gnu-as \
+    --with-gnu-ld \
+    --enable-ld=default \
+    --enable-gold \
+    --enable-plugins \
+    --enable-threads \
+    --enable-deterministic-archives \
+    --disable-nls \
+    --disable-multilib \
+    --disable-gdb \
+    --disable-sim \
+    --disable-werror
 
   make
 }
 
-check() {
-  cd binutils-$pkgver
-
-  # unset LDFLAGS as testsuite makes assumptions about which ones are active
-  # do not abort on errors - manually check log files
-  make -k LDFLAGS="" check || true
-}
-
 package() {
-  cd binutils-$pkgver
+  cd binutils-build
 
-  make DESTDIR="$pkgdir" install
+  make DESTDIR="${pkgdir}" install
 
-  mv "$pkgdir"/usr/${_target} "$pkgdir"/usr/${__target}
-  mv "$pkgdir"/usr/aarch64-unknown-linux-gnu/${_target}/lib/* "$pkgdir"/usr/${__target}/lib
-  mkdir "$pkgdir"/usr/${__target}/share
-  mv "$pkgdir"/usr/share/info "$pkgdir"/usr/${__target}/share
-  
-  rm -r "$pkgdir"/usr/aarch64-unknown-linux-gnu/
+  # elfedit does not support ARM and gprof makes no sense as a cross tool
+  rm -f "${pkgdir}"/usr/bin/${_target}-{elfedit,gprof}
+  rm -f "${pkgdir}"/usr/share/man/man1/${_target}-{elfedit,gprof}.1
+
+  # collides with the host binutils package
+  rm -rf "${pkgdir}"/usr/share/info
+  rm -rf "${pkgdir}"/usr/lib
+
+  # /usr/${_target}/bin/{as,ld,ar,...} (unprefixed hard links) stay: GCC's
+  # gcc-ar/gcc-nm/gcc-ranlib look there. The ldscripts copies are not needed
+  # (ld has them built in) and would clutter the sysroot's lib directory.
+  rm -rf "${pkgdir}"/usr/${_target}/lib
 }
 
 # vim: ts=2 sw=2 et:

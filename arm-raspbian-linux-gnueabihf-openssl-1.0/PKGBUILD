@@ -1,0 +1,85 @@
+# Maintainer: Blue DeviL // SCT <bluedevil [dot] SCT [at] proton [dot] me>
+
+_target=arm-raspbian-linux-gnueabihf
+pkgname=${_target}-openssl-1.0
+_pkgname=openssl
+_ver=1.0.2u
+# use a pacman compatible version scheme
+pkgver=${_ver/[a-z]/.${_ver//[0-9.]/}}
+pkgrel=1
+pkgdesc="The Open Source toolkit for Secure Sockets Layer and Transport Layer Security, 1.0 branch (Raspbian Jessie ARMv6 target, ${_target})"
+arch=(any)
+url='https://www.openssl.org'
+license=(custom:BSD)
+depends=("${_target}-glibc" "${_target}-zlib")
+makedepends=("${_target}-gcc" perl)
+options=(!buildflags !strip !lto !debug !emptydirs !makeflags staticlibs)
+source=("https://www.openssl.org/source/old/1.0.2/${_pkgname}-${_ver}.tar.gz"{,.asc}
+        no-rpath.patch
+        openssl-1.0-versioned-symbols.patch)
+sha256sums=('ecd0c6ffb493dd06707d38b14bb4d8c2288bb7033735606569d8f90f89669d16'
+            'SKIP'
+            '754d6107a306311e15a1db6a1cc031b81691c8b9865e8809ac60ca6f184c957c'
+            '353a84e4c92e36c379ebd9216b8f8fb9c271396583561eb84ac8c825979acaa6')
+validpgpkeys=('8657ABB260F056B1E5190839D9C4D26D0E604491'  # Matt Caswell <matt@openssl.org>
+              '7953AC1FBC3DC8B3B292393ED5E9E43F7DF9EE8C') # Richard Levitte <richard@openssl.org>
+
+prepare() {
+  cd ${_pkgname}-${_ver}
+
+  # remove rpath: http://bugs.archlinux.org/task/14367
+  patch -p0 -i "${srcdir}"/no-rpath.patch
+
+  # Debian symbol versioning (OPENSSL_1.0.0 ...): Raspbian's libssl1.0.0 exports
+  # versioned symbols, so binaries built here reference them exactly like native ones
+  patch -p1 -i "${srcdir}"/openssl-1.0-versioned-symbols.patch
+}
+
+build() {
+  cd ${_pkgname}-${_ver}
+
+  # never let the host's aarch64 flags reach the cross compiler
+  unset CC CXX CFLAGS CPPFLAGS CXXFLAGS LDFLAGS
+
+  ./Configure \
+    --prefix=/usr/${_target} \
+    --libdir=lib/openssl-1.0 \
+    --cross-compile-prefix=${_target}- \
+    -DOPENSSL_NO_CAPIENG \
+    no-ssl3-method \
+    threads \
+    shared \
+    zlib-dynamic \
+    linux-armv4 \
+    "-Wa,--noexecstack"
+
+  make
+}
+
+package() {
+  cd ${_pkgname}-${_ver}
+
+  make INSTALL_PREFIX="${pkgdir}" install_sw
+
+  # Move some files around so 1.0 and 1.1 can coexist in the sysroot
+  install -m755 -d "${pkgdir}"/usr/${_target}/include/openssl-1.0
+  mv "${pkgdir}"/usr/${_target}/include/openssl "${pkgdir}"/usr/${_target}/include/openssl-1.0/
+  mv "${pkgdir}"/usr/${_target}/lib/openssl-1.0/libcrypto.so.1.0.0 "${pkgdir}"/usr/${_target}/lib/
+  mv "${pkgdir}"/usr/${_target}/lib/openssl-1.0/libssl.so.1.0.0 "${pkgdir}"/usr/${_target}/lib/
+  ln -sf ../libssl.so.1.0.0 "${pkgdir}"/usr/${_target}/lib/openssl-1.0/libssl.so
+  ln -sf ../libcrypto.so.1.0.0 "${pkgdir}"/usr/${_target}/lib/openssl-1.0/libcrypto.so
+  mv "${pkgdir}"/usr/${_target}/bin/openssl "${pkgdir}"/usr/${_target}/bin/openssl-1.0
+
+  # Update includedir in .pc files
+  sed -e 's|/include$|/include/openssl-1.0|' -i "${pkgdir}"/usr/${_target}/lib/openssl-1.0/pkgconfig/*.pc
+
+  rm -rf "${pkgdir}"/usr/${_target}/bin/c_rehash "${pkgdir}"/usr/${_target}/ssl
+
+  install -Dm644 LICENSE "${pkgdir}"/usr/${_target}/share/licenses/${pkgname}/LICENSE
+
+  # every ELF file: drop DWARF only, keep symbol tables (objdump -f probes the format)
+  find "${pkgdir}"/usr/${_target}/lib -type f \
+    -exec sh -c '"$1" -f "$3" >/dev/null 2>&1 && "$2" --strip-debug "$3"' _ ${_target}-objdump ${_target}-strip {} \;
+}
+
+# vim: ts=2 sw=2 et:

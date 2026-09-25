@@ -1,61 +1,128 @@
-# Raspbian ARMHF Toolchain for Arch Linux ARM (Aarch64 Host)
+# Raspbian (ARMv6) cross toolchain for Arch Linux ARM (aarch64 host)
 
-**TODO** Compile stage1
+PKGBUILDs for a toolchain that builds **32-bit ARM executables for the legacy
+Raspbian Jessie image** (`2017-04-10-raspbian-jessie.img`, the one from Azeria's
+ARM exploitation tutorials, run under QEMU) on an Arch Linux ARM machine.
 
-There is a populer Raspbian Image which can be emulate by QEMU. That Raspbian
-image is which @azeria used in her blog. Here are the versions list of
-important packages in that raspbian image
+This is **not** the AUR `arm-linux-gnueabihf-*` toolchain. Debian/AUR "armhf" means
+ARMv7-A + VFPv3-D16 + Thumb-2 and a 2025 glibc; Raspbian's "armhf" is **ARMv6 + VFPv2,
+ARM mode** (BCM2835, Pi 1/Zero) with glibc 2.19. Binaries from the AUR toolchain do
+not run on the image. Everything here is period-correct and mirrors what the image
+was built with, verified by reading the image itself (see `PLAN.md` and
+`scripts/raspbian_image_inventory.py`):
 
-Version list
+| Image component (dpkg)          | Version           | This project                            |
+|---------------------------------|-------------------|-----------------------------------------|
+| gcc-4.9 / libstdc++6            | 4.9.2-10          | gcc 4.9.2 (`c,c++,lto`)                 |
+| libc6                           | 2.19-18+deb8u7    | glibc 2.19                              |
+| binutils                        | 2.25-5            | binutils 2.25                           |
+| kernel (image / qemu)           | 4.4.50 / 4.4.34   | linux-api-headers 4.4.34                |
+| gdb                             | 7.7.1             | gdb 17.2 (host tool, matches gdb-common)|
+| zlib1g                          | 1.2.8             | zlib 1.2.8                              |
+| libssl1.0.0                     | 1.0.1t            | openssl 1.0.2u (same ABI, Debian symbol versions) |
+| (none)                          |                   | openssl 1.1.1w (for software that needs 1.1) |
 
-```txt
-Linux Kernel v4.4.34
-Binutils v2.25
-libc v2.19
-GCC v4.9.2
-gdb v7.7.1
-openssl v1.0.1
-zlib v1.2.8
+## Layout
+
+* One name for everything, the GNU triplet `arm-raspbian-linux-gnueabihf`: package
+  names and folders (`arm-raspbian-linux-gnueabihf-*`), the commands
+  (`arm-raspbian-linux-gnueabihf-{gcc,g++,as,ld,gdb,ldd,...}`), the sysroot
+  (`/usr/arm-raspbian-linux-gnueabihf/{include,lib}`) and GCC's internals
+  (`/usr/lib/gcc/arm-raspbian-linux-gnueabihf/4.9.2/`).
+* Why a vendor field: `arm-linux-gnueabihf-raspbian` is not a valid GNU triplet
+  (`cpu-vendor-os`), and plain `arm-linux-gnueabihf` is Debian's ARMv7 armhf, which
+  the AUR packages already use. `arm-raspbian-linux-gnueabihf` is what crosstool-NG
+  style toolchains do (`arm-rpi-linux-gnueabihf`); GCC/binutils/glibc key their
+  behaviour on `arm` + `linux-gnueabihf` only, so nothing else changes.
+* Autotools/CMake cross builds simply use `--host=arm-raspbian-linux-gnueabihf`;
+  every `<host>-tool` exists. Nothing collides with the AUR `arm-linux-gnueabihf-*`
+  packages.
+* Compiler defaults: `-march=armv6 -mfpu=vfp -mfloat-abi=hard`, dynamic linker
+  `/lib/ld-linux-armhf.so.3`, `--hash-style=both`.
+
+## Build and install order
+
+Every step needs the previous one installed (`sudo pacman -U <pkg>`). Use
+`MAKEFLAGS=-j$(nproc)` unless your `makepkg.conf` sets it.
+
+1. `arm-raspbian-linux-gnueabihf-linux-api-headers`
+2. `arm-raspbian-linux-gnueabihf-binutils`
+3. `arm-raspbian-linux-gnueabihf-gcc-stage1` (C only, no libc)
+4. `arm-raspbian-linux-gnueabihf-glibc` (built with stage1)
+5. `arm-raspbian-linux-gnueabihf-gcc` (replaces stage1 automatically)
+6. `arm-raspbian-linux-gnueabihf-gdb`
+
+Part 2 (libraries in the sysroot):
+
+1. `arm-raspbian-linux-gnueabihf-zlib`
+2. `arm-raspbian-linux-gnueabihf-openssl-1.0`
+3. `arm-raspbian-linux-gnueabihf-openssl-1.1`
+
+There is no `gcc-stage2` and no `glibc-headers` package: glibc 2.19 builds directly
+with the headers-less stage1 compiler (LFS 7.5 did the same).
+
+```bash
+for p in linux-api-headers binutils gcc-stage1 glibc gcc gdb zlib openssl-1.0 openssl-1.1; do
+  ( cd arm-raspbian-linux-gnueabihf-$p && MAKEFLAGS=-j$(nproc) makepkg -sf && sudo pacman -U --noconfirm *.pkg.tar.xz )
+done
 ```
 
-Compilation and Installation order:
+## Use
 
-1. arm-linux-gnueabihf-raspbian-linux-api-headers
-2. arm-linux-gnueabihf-raspbian-binutils
+```bash
+arm-raspbian-linux-gnueabihf-gcc -O2 -o hello hello.c
+arm-raspbian-linux-gnueabihf-readelf -A hello | grep -E 'CPU_arch|FP_arch|VFP_args'
+qemu-arm -L /usr/arm-raspbian-linux-gnueabihf ./hello           # run on the host
+arm-raspbian-linux-gnueabihf-ldd hello                          # cross ldd
+scripts/verify_toolchain.sh                                     # full self-test
+```
 
-Build and install above two packages. Before building gcc, we need some
-**intermediary** packages to build gcc.
+Debug with QEMU user mode:
 
-1. arm-linux-gnueabihf-raspbian-gcc-stage1
-2. arm-linux-gnueabihf-raspbian-glibc-headers -> needs stage1
+```bash
+qemu-arm -g 1234 -L /usr/arm-raspbian-linux-gnueabihf ./hello &
+arm-raspbian-linux-gnueabihf-gdb -q ./hello -ex 'target remote :1234' -ex 'break main' -ex continue
+```
 
-Build and install above two packages. Now we can build stage2. After
-installing gcc-stage2 we can now build `glibc`. But while installing
-gcc-stage2, gcc-stage1 must be uninstalled.
+Debug inside the image (system emulation): boot it with the launch scripts next to
+the image (`/mnt/psf/BOLUT/QMU/ARM/RASPBIAN/EL/run-raspbian-{linux,macos}.sh`, which
+forward host port 5022 to ssh and 1234 to gdbserver), run `gdbserver :1234 ./hello`
+in the guest and `target remote localhost:1234` from the cross gdb; `set sysroot`
+already points at our glibc, which has symbols (the image's libc is stripped).
 
-1. arm-linux-gnueabihf-raspbian-gcc-stage2
+OpenSSL: `-I$SYSROOT/include/openssl-1.0 -L$SYSROOT/lib/openssl-1.0` (or `-1.1`),
+`PKG_CONFIG_LIBDIR=$SYSROOT/lib/openssl-1.0/pkgconfig`.
 
-Before installing x86_64-linux-gnu-glibc you should uninstall
-`x86_64-linux-gnu-glibc-headers`.
+## Verified
 
-1. arm-linux-gnueabihf-raspbian-glibc -> needs gcc-stage2 to build
-2. arm-linux-gnueabihf-raspbian-gcc -> remove gcc-stage2 before installing
-3. arm-linux-gnueabihf-raspbian-gdb
+`scripts/verify_toolchain.sh` passes on the build host: C and C++ samples are
+ARMv6/VFPv2/hard-float with interpreter `/lib/ld-linux-armhf.so.3` and ABI note
+2.6.32, need at most `GLIBC_2.4`, `GLIBCXX_3.4.9`, `CXXABI_1.3` (image limits: glibc
+2.19, libstdc++ 6.0.20 = `GLIBCXX_3.4.20`/`CXXABI_1.3.8`), run under `qemu-arm`, the
+image's own `armageddon` and `pwndr3` samples run against the sysroot (the latter
+needs `libcrypto.so.1.0.0@OPENSSL_1.0.0`), and the cross gdb remote-debugs a binary
+through QEMU's gdbstub. Running inside the image itself (`qemu-system-arm`) is the
+one step left to the user's QEMU setup.
 
-## Optional
+## Building 2014 sources on a 2026 host
 
-I need openssl-1.1 for some packages. To build openssl we first need zlib.
-Build and install zlib, then build and install openssl-1.1
+GCC 4.9.2 needs one patch (`gcc/cp/cfns.h` gnu_inline) and `-std=gnu11`/`-std=gnu++98
+-fpermissive` host flags; glibc 2.19 needs the LFS `libc_cv_*` cache variables and
+`make no_deps=t` (GNU make >= 4.4 takes 25 minutes per subdirectory otherwise). Each
+package README explains its own quirk.
 
-1. arm-linux-gnueabihf-raspbian-zlib
-2. arm-linux-gnueabihf-raspbian-openssl-1.1
+## Scripts
 
-## Run ARMHF Binaries on Arch Linux using QEMU
+* `scripts/raspbian_image_inventory.py`: prints the image's identity and package
+  versions straight from the `.img` (debugfs on the ext4 partition, no mount).
+* `scripts/verify_toolchain.sh`: compiles C/C++ samples, checks ELF attributes and
+  glibc symbol versions against the image, runs them under `qemu-arm`.
 
 ## Resources
 
-* [Archlinux AUR - arm-linux-gnueabihf-* packages][01]
-* [Archlinux AUR - arm-linux-gnueabihf-binutils v2.25.1][02]
+* [AUR arm-linux-gnueabihf-* packages](https://aur.archlinux.org/packages?O=0&K=arm-linux-gnueabihf) (layout reference)
+* [Azeria Labs: emulate Raspberry Pi with QEMU](https://azeria-labs.com/emulate-raspberry-pi-with-qemu/)
+* [LFS 7.5: glibc 2.19 with a pass-1 GCC](https://www.linuxfromscratch.org/lfs/view/7.5/chapter05/glibc.html)
 
 ## Author
 
@@ -64,6 +131,3 @@ Blue DeviL // SCT
 ## License
 
 AGPLv3
-
-[01]: https://aur.archlinux.org/packages?O=0&K=arm-linux-gnueabihf
-[02]: https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=arm-linux-gnueabihf-binutils&id=46c4b550f223eeb61a707a090d6079e8c4f549e0

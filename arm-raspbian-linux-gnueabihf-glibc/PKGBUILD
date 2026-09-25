@@ -1,1 +1,102 @@
-# Maintainer: Blue DeviL // SCT <bluedevil.SCT@gmail.com>
+# Maintainer: Wilken Gottwalt <wilken dot gottwalt at posteo dot net>
+# Contributor: Blue DeviL // SCT <bluedevil [dot] SCT [at] proton [dot] me>
+
+_target=arm-raspbian-linux-gnueabihf
+pkgname=${_target}-glibc
+pkgver=2.19
+pkgrel=1
+pkgdesc="GNU C Library 2.19 for the Raspbian Jessie ARMv6 target (${_target})"
+arch=(any)
+url='https://www.gnu.org/software/libc/'
+license=(GPL-2.0-only LGPL-2.1-or-later)
+depends=("${_target}-linux-api-headers>=4.4.34")
+makedepends=("${_target}-gcc-stage1>=4.9.2" "${_target}-binutils>=2.25")
+options=(!buildflags !strip !lto !debug !emptydirs staticlibs)
+source=(https://ftp.gnu.org/gnu/libc/glibc-${pkgver}.tar.xz{,.sig}
+        sdt.h
+        sdt-config.h
+        xldd)
+sha256sums=('2d3997f588401ea095a0b27227b1d50cdfdd416236f6567b564549d3b46ea2a2'
+            'SKIP'
+            '1ecf90005ff5a65374c7266acb164fa265aff92328593bdca2352acf5dab240d'
+            'cdc234959c6fdb43f000d3bb7d1080b0103f4080f5e67bcfe8ae1aaf477812f0'
+            '96aaa6baacd84f8cd517e5b31d575b766a7af5a3be6fad3c8707da796e8f8ca7')
+validpgpkeys=('F37CDAB708E65EA183FD1AF625EF0A436C2A4AFF') # Carlos O'Donell <carlos@systemhalted.org>
+
+prepare() {
+  mkdir -p "${srcdir}"/glibc-build
+}
+
+build() {
+  cd glibc-build
+
+  # flat sysroot layout: everything under /usr/${_target}/{include,lib}
+  echo "slibdir=/lib" >> configparms
+  echo "rtlddir=/lib" >> configparms
+  echo "sbindir=/bin" >> configparms
+  echo "rootsbindir=/bin" >> configparms
+  # ldconfig, iconv, localedef, nscd, ... are useless in a cross sysroot
+  echo "build-programs=no" >> configparms
+
+  export CC=${_target}-gcc
+  export AR=${_target}-ar
+  export RANLIB=${_target}-ranlib
+  # glibc < 2.25 cannot be built with stack-protector or fortify
+  export CFLAGS='-O2 -g -pipe'
+  # the only host-compiled helper (rpcgen) is 2014 C: keep the host GCC on C11 semantics
+  export BUILD_CC='gcc -std=gnu11 -fpermissive'
+
+  # libc_cv_*: glibc < 2.20 configure link-tests these against a libc that does not
+  # exist yet when bootstrapping with the stage1 compiler (LFS 7.5 recipe)
+  ../glibc-${pkgver}/configure \
+    --host=${_target} \
+    --build=${CHOST} \
+    --prefix=/usr \
+    --libdir=/lib \
+    --libexecdir=/lib \
+    --includedir=/include \
+    --with-headers=/usr/${_target}/include \
+    --enable-add-ons \
+    --enable-kernel=2.6.32 \
+    --enable-obsolete-rpc \
+    --enable-bind-now \
+    --enable-stackguard-randomization \
+    --disable-multi-arch \
+    --disable-profile \
+    --disable-werror \
+    --without-selinux \
+    --without-gd \
+    libc_cv_forced_unwind=yes \
+    libc_cv_c_cleanup=yes \
+    libc_cv_ctors_header=yes
+
+  # no_deps=t: do not include the hundreds of generated *.d files as makefiles.
+  # GNU make >= 4.4 re-walks its included-makefile chain quadratically for them
+  # (25 minutes per subdirectory, 0.03 s with make 4.3 or with no_deps=t).
+  make no_deps=t
+}
+
+package() {
+  cd glibc-build
+
+  make install_root="${pkgdir}"/usr/${_target} no_deps=t install
+
+  # ldd drop-in for cross toolchains (crosstool-ng's xldd)
+  install -Dm755 "${srcdir}"/xldd "${pkgdir}"/usr/bin/${_target}-ldd
+
+  # SystemTap probe headers: libstdc++ picks them up, gdb's 'catch throw' uses them
+  install -Dm644 "${srcdir}"/sdt.h "${pkgdir}"/usr/${_target}/include/sys/sdt.h
+  install -Dm644 "${srcdir}"/sdt-config.h "${pkgdir}"/usr/${_target}/include/sys/sdt-config.h
+
+  # not needed in a cross sysroot (config files, scripts, locale data)
+  rm -rf "${pkgdir}"/usr/${_target}/{etc,var,bin,sbin,usr}
+
+  # every ELF file (shared libraries, static archives, crt objects): drop the DWARF
+  # (it embeds ${srcdir}, and gas 2.25 has no --debug-prefix-map) but keep the full
+  # symbol tables, so the cross gdb still resolves every libc function. objdump -f
+  # probes the format (linker scripts are skipped); file(1) cannot run under fakeroot.
+  find "${pkgdir}"/usr/${_target}/lib -type f \
+    -exec sh -c '"$1" -f "$3" >/dev/null 2>&1 && "$2" --strip-debug "$3"' _ ${_target}-objdump ${_target}-strip {} \;
+}
+
+# vim: ts=2 sw=2 et:

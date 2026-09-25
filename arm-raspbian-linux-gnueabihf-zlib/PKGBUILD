@@ -1,1 +1,47 @@
-# Maintainer: Blue DeviL // SCT <bluedevil.SCT@gmail.com>
+# Maintainer: Blue DeviL // SCT <bluedevil [dot] SCT [at] proton [dot] me>
+
+_target=arm-raspbian-linux-gnueabihf
+pkgname=${_target}-zlib
+pkgver=1.2.8
+pkgrel=1
+pkgdesc="Compression library implementing the deflate compression method found in gzip and PKZIP (Raspbian Jessie ARMv6 target, ${_target})"
+arch=(any)
+url='https://www.zlib.net/'
+license=(Zlib)
+depends=("${_target}-glibc")
+makedepends=("${_target}-gcc")
+options=(!buildflags !strip !lto !debug !emptydirs staticlibs)
+source=(https://zlib.net/fossils/zlib-${pkgver}.tar.gz)
+sha256sums=('36658cb768a54c1d4dec43c3116c27ed893e88b02ecfcb44f2166f9c0b7f2a0d')
+
+build() {
+  cd zlib-${pkgver}
+
+  export CC=${_target}-gcc
+  export AR=${_target}-ar
+  export RANLIB=${_target}-ranlib
+  export CFLAGS='-O2 -g -pipe'
+
+  ./configure \
+    --prefix=/usr/${_target} \
+    --libdir=/usr/${_target}/lib \
+    --includedir=/usr/${_target}/include
+
+  make
+}
+
+package() {
+  cd zlib-${pkgver}
+
+  make DESTDIR="${pkgdir}" install
+
+  # 1.2.8 has no LICENSE file; the notice lives in README
+  install -Dm644 README "${pkgdir}"/usr/${_target}/share/licenses/${pkgname}/README
+  rm -rf "${pkgdir}"/usr/${_target}/share/man
+
+  # every ELF file: drop DWARF only, keep symbol tables (objdump -f probes the format)
+  find "${pkgdir}"/usr/${_target}/lib -type f \
+    -exec sh -c '"$1" -f "$3" >/dev/null 2>&1 && "$2" --strip-debug "$3"' _ ${_target}-objdump ${_target}-strip {} \;
+}
+
+# vim: ts=2 sw=2 et:
