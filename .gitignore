@@ -1,14 +1,32 @@
 # files
+# makepkg output for arch=(*) packages
 *-aarch64.pkg.tar.xz
 *-x86_64.pkg.tar.xz
+*-any.pkg.tar.xz
 
-*tar.bz2
-*tar.bz2.sig
-*tar.xz
-*tar.sign
-*tar.gz
-*tar.gz.asc
+*.tar
+*.tar.*
+*.jar
+*.exe
+*.msi
+*.deb
+*.zip
+*.tgz
+*.log
+*.log.*
+*.sig
 
+pkg/
+src/
+logs/
+
+README.EN.md
+.ruff*
+.claude
+PLAN*
+PROMPT*
+scripts*
+examples*
 
 #
 # macOS gitignore start
